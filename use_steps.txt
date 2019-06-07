@@ -11,7 +11,7 @@ cd D:\GitHub\Coop_pix2pix
 python main.py --dataset_dir datasets
 
 # mac
-cd /Users/howarder3/Documents/GitHub/Coop_pix2pix 
+cd /Users/howarder3/Documents/GitHub/Coop_recov 
 python main.py
 
 # pip packages 

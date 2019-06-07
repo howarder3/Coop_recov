@@ -25,7 +25,7 @@ class Coop_pix2pix(object):
 				langevin_step_size = 0.002,
 				descriptor_learning_rate = 0.01,
 				generator_learning_rate = 0.0001,
-				recover_learning_rate = 0.0001,
+				encoder_learning_rate = 0.0001,
 				dataset_name='edges2handbags', dataset_dir ='./test_datasets', 
 				output_dir='./output_dir', checkpoint_dir='./checkpoint_dir', log_dir='./log_dir'):
 		"""
@@ -57,7 +57,7 @@ class Coop_pix2pix(object):
 		# learning rate
 		self.descriptor_learning_rate = descriptor_learning_rate 
 		self.generator_learning_rate  = generator_learning_rate 
-		self.recover_learning_rate  = recover_learning_rate 
+		self.encoder_learning_rate  = encoder_learning_rate 
 		# print(1e-5) # 0.00001
 		
 
@@ -69,52 +69,20 @@ class Coop_pix2pix(object):
 		self.log_dir = log_dir
 		self.epoch_startpoint = 0
 
-		self.gen_encode_layer2_batchnorm = batch_norm(name='gen_encode_layer_2_batchnorm')
-		self.gen_encode_layer3_batchnorm = batch_norm(name='gen_encode_layer_3_batchnorm')
-		self.gen_encode_layer4_batchnorm = batch_norm(name='gen_encode_layer_4_batchnorm')
-		self.gen_encode_layer5_batchnorm = batch_norm(name='gen_encode_layer_5_batchnorm')
-		self.gen_encode_layer6_batchnorm = batch_norm(name='gen_encode_layer_6_batchnorm')
-		self.gen_encode_layer7_batchnorm = batch_norm(name='gen_encode_layer_7_batchnorm')
-		self.gen_encode_layer8_batchnorm = batch_norm(name='gen_encode_layer_8_batchnorm')
-
-		self.gen_decode_layer1_batchnorm = batch_norm(name='gen_decode_layer_1_batchnorm')
-		self.gen_decode_layer2_batchnorm = batch_norm(name='gen_decode_layer_2_batchnorm')
-		self.gen_decode_layer3_batchnorm = batch_norm(name='gen_decode_layer_3_batchnorm')
-		self.gen_decode_layer4_batchnorm = batch_norm(name='gen_decode_layer_4_batchnorm')
-		self.gen_decode_layer5_batchnorm = batch_norm(name='gen_decode_layer_5_batchnorm')
-		self.gen_decode_layer6_batchnorm = batch_norm(name='gen_decode_layer_6_batchnorm')
-		self.gen_decode_layer7_batchnorm = batch_norm(name='gen_decode_layer_7_batchnorm')
-
-		self.rec_encode_layer2_batchnorm = batch_norm(name='rec_encode_layer_2_batchnorm')
-		self.rec_encode_layer3_batchnorm = batch_norm(name='rec_encode_layer_3_batchnorm')
-		self.rec_encode_layer4_batchnorm = batch_norm(name='rec_encode_layer_4_batchnorm')
-		self.rec_encode_layer5_batchnorm = batch_norm(name='rec_encode_layer_5_batchnorm')
-		self.rec_encode_layer6_batchnorm = batch_norm(name='rec_encode_layer_6_batchnorm')
-		self.rec_encode_layer7_batchnorm = batch_norm(name='rec_encode_layer_7_batchnorm')
-		self.rec_encode_layer8_batchnorm = batch_norm(name='rec_encode_layer_8_batchnorm')
-
-		self.rec_decode_layer1_batchnorm = batch_norm(name='rec_decode_layer_1_batchnorm')
-		self.rec_decode_layer2_batchnorm = batch_norm(name='rec_decode_layer_2_batchnorm')
-		self.rec_decode_layer3_batchnorm = batch_norm(name='rec_decode_layer_3_batchnorm')
-		self.rec_decode_layer4_batchnorm = batch_norm(name='rec_decode_layer_4_batchnorm')
-		self.rec_decode_layer5_batchnorm = batch_norm(name='rec_decode_layer_5_batchnorm')
-		self.rec_decode_layer6_batchnorm = batch_norm(name='rec_decode_layer_6_batchnorm')
-		self.rec_decode_layer7_batchnorm = batch_norm(name='rec_decode_layer_7_batchnorm')
-
-		self.des_layer_1_batchnorm = batch_norm(name='des_layer_1_batchnorm')
-		self.des_layer_2_batchnorm = batch_norm(name='des_layer_2_batchnorm')
-		self.des_layer_3_batchnorm = batch_norm(name='des_layer_3_batchnorm')
-
 		self.sigma1 = 0.016
 		self.sigma2 = 0.3
 		self.beta1 = 0.5
 
-		self.input_revised_B = tf.placeholder(tf.float32,
+		self.input_latent = tf.placeholder(tf.float32,
+				[self.batch_size, 1, 1, 100],
+				name='input_latent')
+		self.input_picture = tf.placeholder(tf.float32,
 				[self.batch_size, self.image_size, self.image_size, self.input_pic_dim],
-				name='input_revised_B')
-		self.input_generated_B = tf.placeholder(tf.float32,
-				[self.batch_size, self.image_size, self.image_size, self.input_pic_dim],
-				name='input_generated_B')
+				name='input_picture')
+
+		# self.input_generated_B = tf.placeholder(tf.float32,
+		# 		[self.batch_size, self.image_size, self.image_size, self.input_pic_dim],
+		# 		name='input_generated_B')
 		self.input_real_data_B = tf.placeholder(tf.float32,
 				[self.batch_size, self.image_size, self.image_size, self.input_pic_dim],
 				name='input_real_data_B')
@@ -128,29 +96,15 @@ class Coop_pix2pix(object):
 	def build_model(self):
 
 		# generator 
-		self.generated_B = self.generator(self.input_real_data_A, reuse = False)
+		self.latent = self.encoder(self.input_picture, reuse = False)
 
-		# descriptor
-		described_real_data_B = self.descriptor(self.input_real_data_B, reuse=False)
-		described_revised_B = self.descriptor(self.input_revised_B, reuse=True)
-		described_generated_B = self.descriptor(self.input_generated_B, reuse=True)
-
-		# recover
-		self.recovered_A = self.recover(self.input_generated_B, reuse = False)
-
-		# symbolic langevins
-		self.des_langevin_revision_output = self.des_langevin_revision(self.input_generated_B)
-		self.lang_1_output = self.lang_1(self.input_revised_B)
-		self.lang_10_output = self.lang_10(self.input_revised_B)
-		self.lang_30_output = self.lang_30(self.input_revised_B)
-		self.lang_50_output = self.lang_50(self.input_revised_B)
-		self.lang_100_output = self.lang_100(self.input_revised_B)
-		self.lang_200_output = self.lang_200(self.input_revised_B)
+		self.color_pic = self.colorful_decoder(self.input_latent, reuse = False)
+		self.sketch_pic = self.sketch_decoder(self.input_latent, reuse = False)
 
 		t_vars = tf.trainable_variables()
-		self.des_vars = [var for var in t_vars if var.name.startswith('des')]
-		self.gen_vars = [var for var in t_vars if var.name.startswith('gen')]
-		self.rec_vars = [var for var in t_vars if var.name.startswith('rec')]
+		self.encoder_vars = [var for var in t_vars if var.name.startswith('encoder')]
+		self.color_decode_vars = [var for var in t_vars if var.name.startswith('color_decode')]
+		self.sketch_decode_vars = [var for var in t_vars if var.name.startswith('sketch_decode')]
 
 		# # descriptor variables
 		# print("\n------  self.des_vars  ------\n")
@@ -158,37 +112,48 @@ class Coop_pix2pix(object):
 		# 	print(var)
 
 
-		# # # generator variables
-		# print("\n------  self.gen_vars  ------\n")
-		# for var in self.gen_vars:
-		# 	print(var)
+		# encode variables
+		print("\n------  self.encoder_vars  ------\n")
+		for var in self.encoder_vars:
+			print(var)
+		print("")
 
-		# print("")
+		# color_decode variables
+		print("\n------  self.color_decode_vars  ------\n")
+		for var in self.color_decode_vars:
+			print(var)
+		print("")
+
+		# sketch_decode variables
+		print("\n------  self.sketch_decode_vars  ------\n")
+		for var in self.sketch_decode_vars:
+			print(var)
+		print("")
 		
 
-		# descriptor loss functions
-		self.des_loss = tf.reduce_sum(tf.subtract(tf.reduce_mean(described_revised_B, axis=0), tf.reduce_mean(described_real_data_B, axis=0)))
+		# # descriptor loss functions
+		# self.des_loss = tf.reduce_sum(tf.subtract(tf.reduce_mean(described_revised_B, axis=0), tf.reduce_mean(described_real_data_B, axis=0)))
 
-		self.des_optim = tf.train.AdamOptimizer(self.descriptor_learning_rate, beta1=self.beta1).minimize(self.des_loss, var_list=self.des_vars)
-
-
-		# Compute Mean square error(MSE) for generated data and real data
-		self.mse_loss = tf.reduce_mean(
-            tf.pow(tf.subtract(tf.reduce_mean(self.input_generated_B, axis=0), tf.reduce_mean(self.input_revised_B, axis=0)), 2))
+		# self.des_optim = tf.train.AdamOptimizer(self.descriptor_learning_rate, beta1=self.beta1).minimize(self.des_loss, var_list=self.des_vars)
 
 
-		# generator loss functions
-		self.gen_loss = tf.reduce_sum(tf.reduce_mean(1.0 / (2 * self.sigma2 * self.sigma2) * tf.square(self.input_revised_B - self.generated_B), axis=0))
+		# # Compute Mean square error(MSE) for generated data and real data
+		# self.mse_loss = tf.reduce_mean(
+  #           tf.pow(tf.subtract(tf.reduce_mean(self.input_generated_B, axis=0), tf.reduce_mean(self.input_revised_B, axis=0)), 2))
+
+
+		# # generator loss functions
+		# self.gen_loss = tf.reduce_sum(tf.reduce_mean(1.0 / (2 * self.sigma2 * self.sigma2) * tf.square(self.input_revised_B - self.generated_B), axis=0))
 		
-		self.gen_optim = tf.train.AdamOptimizer(self.generator_learning_rate, beta1=self.beta1).minimize(self.gen_loss, var_list=self.gen_vars)
+		# self.gen_optim = tf.train.AdamOptimizer(self.generator_learning_rate, beta1=self.beta1).minimize(self.gen_loss, var_list=self.gen_vars)
 
 
 		# recover loss functions
-		self.rec_loss = tf.reduce_mean((self.recovered_A - self.input_real_data_A)**2)
+		self.encoder_loss = L1_distance(self.latent, self.input_latent) # tf.reduce_mean((self.recovered_A - self.input_real_data_A)**2)
 
 		# tf.reduce_sum(tf.reduce_mean(1.0 / (2 * self.sigma2 * self.sigma2) * tf.square(self.recovered_A - self.input_real_data_A), axis=0))
 
-		self.rec_optim = tf.train.AdamOptimizer(self.recover_learning_rate, beta1=self.beta1).minimize(self.rec_loss, var_list=self.rec_vars)
+		self.encoder_optim = tf.train.AdamOptimizer(self.encoder_learning_rate, beta1=self.beta1).minimize(self.encoder_loss, var_list=self.encoder_vars)
 
 		self.saver = tf.train.Saver(max_to_keep=10)
 
@@ -241,25 +206,32 @@ class Coop_pix2pix(object):
 				data_A = batch_images[:, :, :, : self.input_pic_dim] 
 				data_B = batch_images[:, :, :, self.input_pic_dim:self.input_pic_dim+self.output_pic_dim] 
 
-				# step G1: try to generate B domain(target domain) picture
-				generated_B = sess.run(self.generated_B, feed_dict={self.input_real_data_A: data_A})
+				# step 1: sketch -> latent
+				latent_var = sess.run(self.latent, feed_dict={self.input_picture: data_A})
+				print(" ------ step 1 finish ------ ")
 
-				# step D1: descriptor try to revised image:"generated_B"
-				revised_B = sess.run(self.des_langevin_revision_output, feed_dict={self.input_generated_B: generated_B})
+				# step 2: latent -> colorful picture
+				color_pic = sess.run(self.color_pic, feed_dict={self.input_latent: latent_var})
+				print(" ------ step 2 finish ------ ")
 
-				# step R1: recover origin picture
-				recovered_A = sess.run(self.recovered_A, feed_dict={self.input_generated_B: generated_B})
-				
+				# step 3: colorful picture -> latent
+				recovered_latent_var = sess.run(self.latent, feed_dict={self.input_picture: color_pic})
+				print(" ------ step 3 finish ------ ")
+
+				# step 4: latent -> sketch
+				sketch_pic = sess.run(self.sketch_pic, feed_dict={self.input_latent: recovered_latent_var})
+				print(" ------ step 4 finish ------ ")
+
 
 
 
 				# step D2: update descriptor net
-				descriptor_loss , _ = sess.run([self.des_loss, self.des_optim],
-                                  		feed_dict={self.input_real_data_B: data_B, self.input_revised_B: revised_B})
+				# descriptor_loss , _ = sess.run([self.des_loss, self.des_optim],
+    #                               		feed_dict={self.input_real_data_B: data_B, self.input_revised_B: revised_B})
 
-				# step G2: update generator net
-				generator_loss , _ = sess.run([self.gen_loss, self.gen_optim],
-                                  		feed_dict={self.input_real_data_A: data_A, self.input_revised_B: revised_B}) # self.input_revised_B: revised_B,
+				# # step G2: update generator net
+				# generator_loss , _ = sess.run([self.gen_loss, self.gen_optim],
+    #                               		feed_dict={self.input_real_data_A: data_A, self.input_revised_B: revised_B}) # self.input_revised_B: revised_B,
 
 				# self.input_generated_B: generated_B,
 
@@ -267,7 +239,7 @@ class Coop_pix2pix(object):
 
 				# step R2: update recover net
 				recover_loss , _ = sess.run([self.rec_loss, self.rec_optim],
-                                  		feed_dict={self.input_generated_B: generated_B, self.input_real_data_A: data_A})
+                                  		feed_dict={self.input_latent: latent_var, self.input_picture: color_pic})
 
 
 				# Compute Mean square error(MSE) for generated data and revised data
@@ -283,45 +255,11 @@ class Coop_pix2pix(object):
 							str(datetime.timedelta(seconds=int((time.time()-start_time)*(counter_end-(self.epoch_startpoint*self.num_batch)-counter)/counter))),
 								 descriptor_loss, generator_loss, recover_loss))
 
-				# if need calculate time interval
-				# start_time = time.time()
-
-				# print("data_A shape = {}".format(self.data_A.shape)) # data_A shape = (1, 256, 256, 3)
-				# print(generated_B.shape) # (1, 256, 256, 3)
-				# print(revised_B.shape) # (1, 256, 256, 3)
-				# print("data_B shape = {}".format(self.data_B.shape)) # data_B shape = (1, 256, 256, 3)
-
-
 				if np.mod(counter, 10) == 1:
-					lang_1_output = sess.run(self.lang_1_output, feed_dict={self.input_revised_B: generated_B})
-					lang_10_output = sess.run(self.lang_10_output, feed_dict={self.input_revised_B: generated_B})
-					lang_30_output = sess.run(self.lang_30_output, feed_dict={self.input_revised_B: generated_B})
-					lang_50_output = sess.run(self.lang_50_output, feed_dict={self.input_revised_B: generated_B})
-					lang_100_output = sess.run(self.lang_100_output, feed_dict={self.input_revised_B: generated_B})
-					lang_200_output = sess.run(self.lang_200_output, feed_dict={self.input_revised_B: generated_B})
-
 					save_images(data_A, [self.batch_size, 1],
 						'./{}/ep{:02d}_{:04d}_01_input_data_A.png'.format(self.output_dir, epoch, index))
 					save_images(data_B, [self.batch_size, 1],
 						'./{}/ep{:02d}_{:04d}_02_input_data_B.png'.format(self.output_dir, epoch, index))
-					save_images(generated_B, [self.batch_size, 1],
-						'./{}/ep{:02d}_{:04d}_03_output_generator.png'.format(self.output_dir, epoch, index))
-					save_images(revised_B, [self.batch_size, 1],
-						'./{}/ep{:02d}_{:04d}_04_output_descriptor.png'.format(self.output_dir, epoch, index))
-					save_images(recovered_A, [self.batch_size, 1],
-						'./{}/ep{:02d}_{:04d}_05_recovered_A.png'.format(self.output_dir, epoch, index))
-					save_images(lang_1_output, [self.batch_size, 1],
-						'./{}/ep{:02d}_{:04d}_06_lang_001.png'.format(self.output_dir, epoch, index))
-					save_images(lang_10_output, [self.batch_size, 1],
-						'./{}/ep{:02d}_{:04d}_06_lang_010.png'.format(self.output_dir, epoch, index))
-					save_images(lang_30_output, [self.batch_size, 1],
-						'./{}/ep{:02d}_{:04d}_06_lang_030.png'.format(self.output_dir, epoch, index))
-					save_images(lang_50_output, [self.batch_size, 1],
-						'./{}/ep{:02d}_{:04d}_06_lang_050.png'.format(self.output_dir, epoch, index))
-					save_images(lang_100_output, [self.batch_size, 1],
-						'./{}/ep{:02d}_{:04d}_06_lang_100.png'.format(self.output_dir, epoch, index))
-					save_images(lang_200_output, [self.batch_size, 1],
-						'./{}/ep{:02d}_{:04d}_06_lang_200.png'.format(self.output_dir, epoch, index))
 					
 
 				counter += 1
@@ -333,268 +271,64 @@ class Coop_pix2pix(object):
 			# print('Epoch #{:d}, avg.descriptor loss: {:.4f}, avg.generator loss: {:.4f}, avg.L2 distance: {:4.4f}, '
 			# 	'time: {:.2f}s'.format(epoch, np.mean(des_loss_avg), np.mean(gen_loss_avg), np.mean(mse_avg), time.time() - start_time))
 
-
-
-	def generator(self, input_image, reuse=False):
-		with tf.variable_scope("gen", reuse=reuse):
-
-			# print("\n------  generator layers shape  ------\n")
-			# print("input_image shape: {}".format(input_image.shape))
-
-
-			num_filter = 64
-
-			# ---------- encoder part ----------
-			# gen_encode_conv2d(input_image, output_dimension (by how many filters), scope_name)
-			# input image = [batch_size, 256, 256, input_pic_dim]
-
-			# gen_encode_layer_1_output = (batch_size, 128, 128, num_filter)
-			gen_encode_layer_1_conv = gen_encode_conv2d(input_image, num_filter, name='gen_encode_layer_1_conv') 
-
-			# gen_encode_layer_2_output = (batch_size, 64, 64, num_filter*2)
-			gen_encode_layer_2_conv = gen_encode_conv2d(leaky_relu(gen_encode_layer_1_conv), num_filter*2, name='gen_encode_layer_2_conv') 
-			gen_encode_layer_2_batchnorm = self.gen_encode_layer2_batchnorm(gen_encode_layer_2_conv)
-			
-			# gen_encode_layer_3_output = (batch_size, 32, 32, num_filter*4)
-			gen_encode_layer_3_conv = gen_encode_conv2d(leaky_relu(gen_encode_layer_2_batchnorm), num_filter*4, name='gen_encode_layer_3_conv')
-			gen_encode_layer_3_batchnorm = self.gen_encode_layer3_batchnorm(gen_encode_layer_3_conv)
-
-			# gen_encode_layer_4_output = (batch_size, 16, 16, num_filter*8)
-			gen_encode_layer_4_conv = gen_encode_conv2d(leaky_relu(gen_encode_layer_3_batchnorm), num_filter*8, name='gen_encode_layer_4_conv') 
-			gen_encode_layer_4_batchnorm = self.gen_encode_layer4_batchnorm(gen_encode_layer_4_conv)
-
-			# gen_encode_layer_5_output = (batch_size, 8, 8, num_filter*8)
-			gen_encode_layer_5_conv = gen_encode_conv2d(leaky_relu(gen_encode_layer_4_batchnorm), num_filter*8, name='gen_encode_layer_5_conv') 
-			gen_encode_layer_5_batchnorm = self.gen_encode_layer5_batchnorm(gen_encode_layer_5_conv)
-
-			# gen_encode_layer_6_output = (batch_size, 4, 4, num_filter*8)
-			gen_encode_layer_6_conv = gen_encode_conv2d(leaky_relu(gen_encode_layer_5_batchnorm), num_filter*8, name='gen_encode_layer_6_conv') 
-			gen_encode_layer_6_batchnorm = self.gen_encode_layer6_batchnorm(gen_encode_layer_6_conv)
-
-			# gen_encode_layer_7_output = (batch_size, 2, 2, num_filter*8)
-			gen_encode_layer_7_conv = gen_encode_conv2d(leaky_relu(gen_encode_layer_6_batchnorm), num_filter*8, name='gen_encode_layer_7_conv') 
-			gen_encode_layer_7_batchnorm = self.gen_encode_layer7_batchnorm(gen_encode_layer_7_conv)
-
-			# gen_encode_layer_8_output = (batch_size, 1, 1, num_filter*8)
-			gen_encode_layer_8_conv = gen_encode_conv2d(leaky_relu(gen_encode_layer_7_batchnorm), num_filter*8, name='gen_encode_layer_8_conv') 
-			gen_encode_layer_8_batchnorm = self.gen_encode_layer8_batchnorm(gen_encode_layer_8_conv)
-			self.gen_encode_output_mu = relu(gen_encode_layer_8_batchnorm)
-			self.gen_encode_sigma = relu(gen_encode_layer_8_batchnorm)
-
-			eps = tf.random_normal(
-					shape=tf.shape(self.gen_encode_sigma),
-					mean=0, stddev=1, dtype=tf.float32)
-			self.gen_encode_output = self.gen_encode_output_mu + tf.sqrt(tf.exp(self.gen_encode_sigma)) * eps
-
-
-			# ---------- decoder part ----------
-			# gen_decode_conv2d(input_image, output_dimension (by how many filters), scope_name)
-			# input image = [batch_size, 1, 1, num_filter*8]
-
-			# gen_decode_layer_1_output = (batch_size, 2, 2, num_filter*8*2)
-			gen_decode_layer_1_deconv = gen_decode_conv2d(self.gen_encode_output, num_filter*8, name='gen_decode_layer_1_deconv') 
-			gen_decode_layer_1_batchnorm = self.gen_decode_layer1_batchnorm(gen_decode_layer_1_deconv)
-			gen_decode_layer_1_dropout = tf.nn.dropout(gen_decode_layer_1_batchnorm, rate=0.5)
-			gen_decode_layer_1_concat = tf.concat([gen_decode_layer_1_dropout, gen_encode_layer_7_batchnorm], 3)
-
-			# gen_decode_layer_2_output = (batch_size, 4, 4, num_filter*8*2)
-			gen_decode_layer_2_deconv = gen_decode_conv2d(relu(gen_decode_layer_1_concat), num_filter*8, name='gen_decode_layer_2_deconv') 
-			gen_decode_layer_2_batchnorm = self.gen_decode_layer2_batchnorm(gen_decode_layer_2_deconv)
-			gen_decode_layer_2_dropout = tf.nn.dropout(gen_decode_layer_2_batchnorm, rate=0.5)
-			gen_decode_layer_2_concat = tf.concat([gen_decode_layer_2_dropout, gen_encode_layer_6_batchnorm], 3)
-
-			# gen_decode_layer_3_output = (batch_size, 8, 8, num_filter*8*2)
-			gen_decode_layer_3_deconv = gen_decode_conv2d(relu(gen_decode_layer_2_concat), num_filter*8, name='gen_decode_layer_3_deconv') 
-			gen_decode_layer_3_batchnorm = self.gen_decode_layer3_batchnorm(gen_decode_layer_3_deconv)
-			gen_decode_layer_3_dropout = tf.nn.dropout(gen_decode_layer_3_batchnorm, rate=0.5)
-			gen_decode_layer_3_concat = tf.concat([gen_decode_layer_3_dropout, gen_encode_layer_5_batchnorm], 3)
-
-			# gen_decode_layer_4_output = (batch_size, 16, 16, num_filter*8*2)
-			gen_decode_layer_4_deconv = gen_decode_conv2d(relu(gen_decode_layer_3_concat), num_filter*8, name='gen_decode_layer_4_deconv') 
-			gen_decode_layer_4_batchnorm = self.gen_decode_layer4_batchnorm(gen_decode_layer_4_deconv)
-			gen_decode_layer_4_dropout = tf.nn.dropout(gen_decode_layer_4_batchnorm, rate=0.5)
-			gen_decode_layer_4_concat = tf.concat([gen_decode_layer_4_dropout, gen_encode_layer_4_batchnorm], 3)
-
-			# gen_decode_layer_5_output = (batch_size, 32, 32, num_filter*4*2)
-			gen_decode_layer_5_deconv = gen_decode_conv2d(relu(gen_decode_layer_4_concat), num_filter*4, name='gen_decode_layer_5_deconv') 
-			gen_decode_layer_5_batchnorm = self.gen_decode_layer5_batchnorm(gen_decode_layer_5_deconv)
-			gen_decode_layer_5_dropout = tf.nn.dropout(gen_decode_layer_5_batchnorm, rate=0.5)
-			gen_decode_layer_5_concat = tf.concat([gen_decode_layer_5_dropout, gen_encode_layer_3_batchnorm], 3)
-
-			# gen_decode_layer_6_output = (batch_size, 64, 64, num_filter*2*2)
-			gen_decode_layer_6_deconv = gen_decode_conv2d(relu(gen_decode_layer_5_concat), num_filter*2, name='gen_decode_layer_6_deconv') 
-			gen_decode_layer_6_batchnorm = self.gen_decode_layer6_batchnorm(gen_decode_layer_6_deconv)
-			gen_decode_layer_6_dropout = tf.nn.dropout(gen_decode_layer_6_batchnorm, rate=0.5)
-			gen_decode_layer_6_concat = tf.concat([gen_decode_layer_6_dropout, gen_encode_layer_2_batchnorm], 3)
-
-			# gen_decode_layer_7_output = (batch_size, 128, 128, num_filter*1*2)
-			gen_decode_layer_7_deconv = gen_decode_conv2d(relu(gen_decode_layer_6_concat), num_filter, name='gen_decode_layer_7_deconv') 
-			gen_decode_layer_7_batchnorm = self.gen_decode_layer7_batchnorm(gen_decode_layer_7_deconv)
-			gen_decode_layer_7_dropout = tf.nn.dropout(gen_decode_layer_7_batchnorm, rate=0.5)
-			gen_decode_layer_7_concat = tf.concat([gen_decode_layer_7_dropout, gen_encode_layer_1_conv], 3)
-
-
-			# gen_decode_layer_8_output = (batch_size, 256, 256, output_pic_dim)
-			gen_decode_layer_8_deconv = gen_decode_conv2d(relu(gen_decode_layer_7_concat), self.output_pic_dim, name='gen_decode_layer_8_deconv') 
-			generator_output = tf.nn.tanh(gen_decode_layer_8_deconv)
-
-			return generator_output
-
-	def recover(self, input_image, reuse=False):
-		with tf.variable_scope("rec", reuse=reuse):
-
-			# print("\n------  recover layers shape  ------\n")
-			# print("input_image shape: {}".format(input_image.shape))
-
-
-			num_filter = 64
-
-			# ---------- encoder part ----------
-			# rec_encode_conv2d(input_image, output_dimension (by how many filters), scope_name)
-			# input image = [batch_size, 256, 256, input_pic_dim]
-
-			# rec_encode_layer_1_output = (batch_size, 128, 128, num_filter)
-			rec_encode_layer_1_conv = rec_encode_conv2d(input_image, num_filter, name='rec_encode_layer_1_conv') 
-
-			# rec_encode_layer_2_output = (batch_size, 64, 64, num_filter*2)
-			rec_encode_layer_2_conv = rec_encode_conv2d(leaky_relu(rec_encode_layer_1_conv), num_filter*2, name='rec_encode_layer_2_conv') 
-			rec_encode_layer_2_batchnorm = self.rec_encode_layer2_batchnorm(rec_encode_layer_2_conv)
-			
-			# rec_encode_layer_3_output = (batch_size, 32, 32, num_filter*4)
-			rec_encode_layer_3_conv = rec_encode_conv2d(leaky_relu(rec_encode_layer_2_batchnorm), num_filter*4, name='rec_encode_layer_3_conv')
-			rec_encode_layer_3_batchnorm = self.rec_encode_layer3_batchnorm(rec_encode_layer_3_conv)
-
-			# rec_encode_layer_4_output = (batch_size, 16, 16, num_filter*8)
-			rec_encode_layer_4_conv = rec_encode_conv2d(leaky_relu(rec_encode_layer_3_batchnorm), num_filter*8, name='rec_encode_layer_4_conv') 
-			rec_encode_layer_4_batchnorm = self.rec_encode_layer4_batchnorm(rec_encode_layer_4_conv)
-
-			# rec_encode_layer_5_output = (batch_size, 8, 8, num_filter*8)
-			rec_encode_layer_5_conv = rec_encode_conv2d(leaky_relu(rec_encode_layer_4_batchnorm), num_filter*8, name='rec_encode_layer_5_conv') 
-			rec_encode_layer_5_batchnorm = self.rec_encode_layer5_batchnorm(rec_encode_layer_5_conv)
-
-			# rec_encode_layer_6_output = (batch_size, 4, 4, num_filter*8)
-			rec_encode_layer_6_conv = rec_encode_conv2d(leaky_relu(rec_encode_layer_5_batchnorm), num_filter*8, name='rec_encode_layer_6_conv') 
-			rec_encode_layer_6_batchnorm = self.rec_encode_layer6_batchnorm(rec_encode_layer_6_conv)
-
-			# rec_encode_layer_7_output = (batch_size, 2, 2, num_filter*8)
-			rec_encode_layer_7_conv = rec_encode_conv2d(leaky_relu(rec_encode_layer_6_batchnorm), num_filter*8, name='rec_encode_layer_7_conv') 
-			rec_encode_layer_7_batchnorm = self.rec_encode_layer7_batchnorm(rec_encode_layer_7_conv)
-
-			# rec_encode_layer_8_output = (batch_size, 1, 1, num_filter*8)
-			rec_encode_layer_8_conv = rec_encode_conv2d(leaky_relu(rec_encode_layer_7_batchnorm), num_filter*8, name='rec_encode_layer_8_conv') 
-			rec_encode_layer_8_batchnorm = self.rec_encode_layer8_batchnorm(rec_encode_layer_8_conv)
-
-			# ---------- decoder part ----------
-			# rec_decode_conv2d(input_image, output_dimension (by how many filters), scope_name)
-			# input image = [batch_size, 1, 1, num_filter*8]
-
-			# rec_decode_layer_1_output = (batch_size, 2, 2, num_filter*8*2)
-			rec_decode_layer_1_deconv = rec_decode_conv2d(relu(rec_encode_layer_8_batchnorm), num_filter*8, name='rec_decode_layer_1_deconv') 
-			rec_decode_layer_1_batchnorm = self.rec_decode_layer1_batchnorm(rec_decode_layer_1_deconv)
-			rec_decode_layer_1_dropout = tf.nn.dropout(rec_decode_layer_1_batchnorm, rate=0.5)
-			rec_decode_layer_1_concat = tf.concat([rec_decode_layer_1_dropout, rec_encode_layer_7_batchnorm], 3)
-
-			# rec_decode_layer_2_output = (batch_size, 4, 4, num_filter*8*2)
-			rec_decode_layer_2_deconv = rec_decode_conv2d(relu(rec_decode_layer_1_concat), num_filter*8, name='rec_decode_layer_2_deconv') 
-			rec_decode_layer_2_batchnorm = self.rec_decode_layer2_batchnorm(rec_decode_layer_2_deconv)
-			rec_decode_layer_2_dropout = tf.nn.dropout(rec_decode_layer_2_batchnorm, rate=0.5)
-			rec_decode_layer_2_concat = tf.concat([rec_decode_layer_2_dropout, rec_encode_layer_6_batchnorm], 3)
-
-			# rec_decode_layer_3_output = (batch_size, 8, 8, num_filter*8*2)
-			rec_decode_layer_3_deconv = rec_decode_conv2d(relu(rec_decode_layer_2_concat), num_filter*8, name='rec_decode_layer_3_deconv') 
-			rec_decode_layer_3_batchnorm = self.rec_decode_layer3_batchnorm(rec_decode_layer_3_deconv)
-			rec_decode_layer_3_dropout = tf.nn.dropout(rec_decode_layer_3_batchnorm, rate=0.5)
-			rec_decode_layer_3_concat = tf.concat([rec_decode_layer_3_dropout, rec_encode_layer_5_batchnorm], 3)
-
-			# rec_decode_layer_4_output = (batch_size, 16, 16, num_filter*8*2)
-			rec_decode_layer_4_deconv = rec_decode_conv2d(relu(rec_decode_layer_3_concat), num_filter*8, name='rec_decode_layer_4_deconv') 
-			rec_decode_layer_4_batchnorm = self.rec_decode_layer4_batchnorm(rec_decode_layer_4_deconv)
-			rec_decode_layer_4_dropout = tf.nn.dropout(rec_decode_layer_4_batchnorm, rate=0.5)
-			rec_decode_layer_4_concat = tf.concat([rec_decode_layer_4_dropout, rec_encode_layer_4_batchnorm], 3)
-
-			# rec_decode_layer_5_output = (batch_size, 32, 32, num_filter*4*2)
-			rec_decode_layer_5_deconv = rec_decode_conv2d(relu(rec_decode_layer_4_concat), num_filter*4, name='rec_decode_layer_5_deconv') 
-			rec_decode_layer_5_batchnorm = self.rec_decode_layer5_batchnorm(rec_decode_layer_5_deconv)
-			rec_decode_layer_5_dropout = tf.nn.dropout(rec_decode_layer_5_batchnorm, rate=0.5)
-			rec_decode_layer_5_concat = tf.concat([rec_decode_layer_5_dropout, rec_encode_layer_3_batchnorm], 3)
-
-			# rec_decode_layer_6_output = (batch_size, 64, 64, num_filter*2*2)
-			rec_decode_layer_6_deconv = rec_decode_conv2d(relu(rec_decode_layer_5_concat), num_filter*2, name='rec_decode_layer_6_deconv') 
-			rec_decode_layer_6_batchnorm = self.rec_decode_layer6_batchnorm(rec_decode_layer_6_deconv)
-			rec_decode_layer_6_dropout = tf.nn.dropout(rec_decode_layer_6_batchnorm, rate=0.5)
-			rec_decode_layer_6_concat = tf.concat([rec_decode_layer_6_dropout, rec_encode_layer_2_batchnorm], 3)
-
-			# rec_decode_layer_7_output = (batch_size, 128, 128, num_filter*1*2)
-			rec_decode_layer_7_deconv = rec_decode_conv2d(relu(rec_decode_layer_6_concat), num_filter, name='rec_decode_layer_7_deconv') 
-			rec_decode_layer_7_batchnorm = self.rec_decode_layer7_batchnorm(rec_decode_layer_7_deconv)
-			rec_decode_layer_7_dropout = tf.nn.dropout(rec_decode_layer_7_batchnorm, rate=0.5)
-			rec_decode_layer_7_concat = tf.concat([rec_decode_layer_7_dropout, rec_encode_layer_1_conv], 3)
-
-
-			# rec_decode_layer_8_output = (batch_size, 256, 256, output_pic_dim)
-			rec_decode_layer_8_deconv = rec_decode_conv2d(relu(rec_decode_layer_7_concat), self.output_pic_dim, name='rec_decode_layer_8_deconv') 
-			recover_output = tf.nn.tanh(rec_decode_layer_8_deconv)
-
-			return recover_output
-
-	def descriptor(self, input_image, reuse=False):
-		with tf.variable_scope('des', reuse=reuse):
-
-			# print("\n------  descriptor layers shape  ------\n")
-			# print("input_image shape: {}".format(input_image.shape))
-
-			num_filter = 64
-
-			# ---------- descriptor part ----------
-			# descriptor_conv2d(input_image, output_dimension (by how many filters), scope_name)
-			# input image = [batch_size, 256, 256, input_pic_dim]
-
-			# des_layer_0_conv = (batch_size, 128, 128, num_filter)
-			des_layer_0_conv = des_conv2d(input_image, num_filter, name='des_layer_0_conv')
-
-			# des_layer_1_conv = (batch_size, 64, 64, num_filter*2)
-			des_layer_1_conv = des_conv2d(leaky_relu(des_layer_0_conv), num_filter*2, name='des_layer_1_conv')
-			des_layer_1_batchnorm = self.des_layer_1_batchnorm(des_layer_1_conv)
-
-			# des_layer_2_conv = (batch_size, 32, 32, num_filter*4)
-			des_layer_2_conv = des_conv2d(leaky_relu(des_layer_1_batchnorm), num_filter*4, name='des_layer_2_conv')
-			des_layer_2_batchnorm = self.des_layer_2_batchnorm(des_layer_2_conv)
-			
-			# des_layer_3_conv = (batch_size, 16, 16, num_filter*8)
-			des_layer_3_conv = des_conv2d(leaky_relu(des_layer_2_batchnorm), num_filter*8, name='des_layer_3_conv')
-			des_layer_3_batchnorm = self.des_layer_3_batchnorm(des_layer_3_conv)
-
-			# linearization the descriptor result
-			# # print(des_layer_3_batchnorm.shape) # (1, 16, 16, 512)
-			# # print(des_layer_3_reshape.shape) # (1, 131072)
-
-			des_layer_4_fully_connected = des_fully_connected(leaky_relu(des_layer_3_batchnorm), 100, name="des_layer_4_fully_connected")
-
-			return des_layer_4_fully_connected 
-
-	def des_langevin_revision(self, input_image_arg):
-		# print("input_image_arg.shape: ",input_image_arg.shape)
-		# self.pic_list = []
-		def cond(i, input_image):
-			return tf.less(i, self.langevin_revision_steps)
-
-		def body(i, input_image):
-			# print("input_image.shape: ",input_image.shape)
-			# save_images(input_image, [self.batch_size, 1],
-			# 	'./{}/test.png'.format(self.output_dir))
-			noise = tf.random_normal(shape=[1, self.image_size, self.image_size, 3], name='noise')
-			descripted_input_image = self.descriptor(input_image, reuse=True)
-
-			grad = tf.gradients(descripted_input_image, input_image, name='grad_des')[0]
-			input_image = input_image - 0.5 * self.langevin_step_size * self.langevin_step_size * (input_image / self.sigma1 / self.sigma1 - grad) + self.langevin_step_size * noise
-			# print("input_image.shape: ",input_image.shape)
-			return tf.add(i, 1), input_image
-
-		with tf.name_scope("des_langevin_revision"):
-			i = tf.constant(0)
-			i, input_image = tf.while_loop(cond, body, [i, input_image_arg])
-			return input_image
-
+	def encoder(self, input_image, reuse=False):
+		with tf.variable_scope("encoder", reuse=reuse):
+
+			conv1 = conv2d(input_image, 64, kernal=(5, 5), strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="conv1")
+
+			conv2 = conv2d(conv1, 128, kernal=(3, 3), strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="conv2")
+
+			conv3 = conv2d(conv2, 256, kernal=(3, 3), strides=(1, 1), padding="SAME", activate_func="leaky_relu", name="conv3")
+
+			fc = fully_connected(conv3, 100, name="fc")
+
+			print("latent shape:",fc.shape)
+
+			return fc
+
+	def colorful_decoder(self, input_data, reuse=False):
+		with tf.variable_scope("color_decode", reuse=reuse):
+			print(input_data.shape)
+			input_data = tf.reshape(input_data, [-1, 1, 1, 100])
+			print(input_data.shape)
+			trans_conv1 = transpose_conv2d(input_data, (None, self.image_size // 16, self.image_size // 16, 512), kernal=(4, 4),
+								strides=(1, 1), padding="VALID", activate_func="leaky_relu", name="trans_conv1")
+			trans_conv2 = transpose_conv2d(trans_conv1, (None, self.image_size // 8, self.image_size // 8, 256), kernal=(5, 5),
+								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv2")
+			trans_conv3 = transpose_conv2d(trans_conv2, (None, self.image_size // 4, self.image_size // 4, 128), kernal=(5, 5),
+								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv3")
+			trans_conv4 = transpose_conv2d(trans_conv3, (None, self.image_size // 2, self.image_size // 2, 64), kernal=(5, 5),
+								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv4")
+			trans_conv5 = transpose_conv2d(trans_conv4, (None, self.image_size, self.image_size, 3), kernal=(5, 5),
+								strides=(2, 2), padding="SAME", activate_func=None, name="trans_conv5")
+			result = tf.nn.tanh(trans_conv5)
+
+			print("color shape:",result.shape)
+
+			return result
+
+
+	def sketch_decoder(self, input_data, reuse=False):
+		with tf.variable_scope("sketch_decode", reuse=reuse):
+
+			print(input_data.shape)
+			input_data = tf.reshape(input_data, [-1, 1, 1, 100])
+			print(input_data.shape)
+			trans_conv1 = transpose_conv2d(input_data, (None, self.image_size // 16, self.image_size // 16, 512), kernal=(4, 4),
+								strides=(1, 1), padding="VALID", activate_func="leaky_relu", name="trans_conv1")
+			trans_conv2 = transpose_conv2d(trans_conv1, (None, self.image_size // 8, self.image_size // 8, 256), kernal=(5, 5),
+								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv2")
+			trans_conv3 = transpose_conv2d(trans_conv2, (None, self.image_size // 4, self.image_size // 4, 128), kernal=(5, 5),
+								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv3")
+			trans_conv4 = transpose_conv2d(trans_conv3, (None, self.image_size // 2, self.image_size // 2, 64), kernal=(5, 5),
+								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv4")
+			trans_conv5 = transpose_conv2d(trans_conv4, (None, self.image_size, self.image_size, 3), kernal=(5, 5),
+								strides=(2, 2), padding="SAME", activate_func=None, name="trans_conv5")
+			result = tf.nn.tanh(trans_conv5)
+
+			print("sketch shape:",result.shape)
+
+			return result
 
 
 	def save(self, checkpoint_dir, step):
@@ -610,6 +344,7 @@ class Coop_pix2pix(object):
 					os.path.join(checkpoint_dir, saver_name),
 					global_step=step)
 
+
 	def load(self, checkpoint_dir):
 		print(" [*] Loading checkpoint...")
 		model_dir = "{}".format(self.dataset_name)
@@ -624,127 +359,3 @@ class Coop_pix2pix(object):
 			return True
 		else:
 			return False
-
-	# def langevin_revision_controller(self, input_image_arg, langevin_steps):
-	# 	def cond(i, input_image):
-	# 		return tf.less(i, langevin_steps)
-
-	# 	def body(i, input_image):
-	# 		noise = tf.random_normal(shape=[1, self.image_size, self.image_size, 3], name='noise')
-	# 		descripted_input_image = self.descriptor(input_image, reuse=True)
-
-	# 		grad = tf.gradients(descripted_input_image, input_image, name='grad_des')[0]
-	# 		input_image = input_image - 0.5 * self.langevin_step_size * self.langevin_step_size * (input_image / self.sigma1 / self.sigma1 - grad) + self.langevin_step_size * noise
-	# 		return tf.add(i, 1), input_image
-
-	# 	with tf.name_scope("des_langevin_revision"):
-	# 		i = tf.constant(0)
-	# 		i, input_image = tf.while_loop(cond, body, [i, input_image_arg])
-	# 		return input_image
-
-	def lang_1(self, input_image_arg):
-		def cond(i, input_image):
-			return tf.less(i, 1)
-
-		def body(i, input_image):
-			noise = tf.random_normal(shape=[1, self.image_size, self.image_size, 3], name='noise')
-			descripted_input_image = self.descriptor(input_image, reuse=True)
-
-			grad = tf.gradients(descripted_input_image, input_image, name='grad_des')[0]
-			input_image = input_image - 0.5 * self.langevin_step_size * self.langevin_step_size * (input_image / self.sigma1 / self.sigma1 - grad) + self.langevin_step_size * noise
-			return tf.add(i, 1), input_image
-
-		with tf.name_scope("des_langevin_revision"):
-			i = tf.constant(0)
-			i, input_image = tf.while_loop(cond, body, [i, input_image_arg])
-			return input_image
-
-	def lang_10(self, input_image_arg):
-		def cond(i, input_image):
-			return tf.less(i, 10)
-
-		def body(i, input_image):
-			noise = tf.random_normal(shape=[1, self.image_size, self.image_size, 3], name='noise')
-			descripted_input_image = self.descriptor(input_image, reuse=True)
-
-			grad = tf.gradients(descripted_input_image, input_image, name='grad_des')[0]
-			input_image = input_image - 0.5 * self.langevin_step_size * self.langevin_step_size * (input_image / self.sigma1 / self.sigma1 - grad) + self.langevin_step_size * noise
-			return tf.add(i, 1), input_image
-
-		with tf.name_scope("des_langevin_revision"):
-			i = tf.constant(0)
-			i, input_image = tf.while_loop(cond, body, [i, input_image_arg])
-			return input_image
-
-	def lang_30(self, input_image_arg):
-		def cond(i, input_image):
-			return tf.less(i, 30)
-
-		def body(i, input_image):
-			noise = tf.random_normal(shape=[1, self.image_size, self.image_size, 3], name='noise')
-			descripted_input_image = self.descriptor(input_image, reuse=True)
-
-			grad = tf.gradients(descripted_input_image, input_image, name='grad_des')[0]
-			input_image = input_image - 0.5 * self.langevin_step_size * self.langevin_step_size * (input_image / self.sigma1 / self.sigma1 - grad) + self.langevin_step_size * noise
-			return tf.add(i, 1), input_image
-
-		with tf.name_scope("des_langevin_revision"):
-			i = tf.constant(0)
-			i, input_image = tf.while_loop(cond, body, [i, input_image_arg])
-			return input_image
-
-	def lang_50(self, input_image_arg):
-		def cond(i, input_image):
-			return tf.less(i, 50)
-
-		def body(i, input_image):
-			noise = tf.random_normal(shape=[1, self.image_size, self.image_size, 3], name='noise')
-			descripted_input_image = self.descriptor(input_image, reuse=True)
-
-			grad = tf.gradients(descripted_input_image, input_image, name='grad_des')[0]
-			input_image = input_image - 0.5 * self.langevin_step_size * self.langevin_step_size * (input_image / self.sigma1 / self.sigma1 - grad) + self.langevin_step_size * noise
-			return tf.add(i, 1), input_image
-
-		with tf.name_scope("des_langevin_revision"):
-			i = tf.constant(0)
-			i, input_image = tf.while_loop(cond, body, [i, input_image_arg])
-			return input_image
-
-	def lang_100(self, input_image_arg):
-		def cond(i, input_image):
-			return tf.less(i, 100)
-
-		def body(i, input_image):
-			noise = tf.random_normal(shape=[1, self.image_size, self.image_size, 3], name='noise')
-			descripted_input_image = self.descriptor(input_image, reuse=True)
-
-			grad = tf.gradients(descripted_input_image, input_image, name='grad_des')[0]
-			input_image = input_image - 0.5 * self.langevin_step_size * self.langevin_step_size * (input_image / self.sigma1 / self.sigma1 - grad) + self.langevin_step_size * noise
-			return tf.add(i, 1), input_image
-
-		with tf.name_scope("des_langevin_revision"):
-			i = tf.constant(0)
-			i, input_image = tf.while_loop(cond, body, [i, input_image_arg])
-			return input_image
-
-
-	def lang_200(self, input_image_arg):
-		def cond(i, input_image):
-			return tf.less(i, 200)
-
-		def body(i, input_image):
-			noise = tf.random_normal(shape=[1, self.image_size, self.image_size, 3], name='noise')
-			descripted_input_image = self.descriptor(input_image, reuse=True)
-
-			grad = tf.gradients(descripted_input_image, input_image, name='grad_des')[0]
-			input_image = input_image - 0.5 * self.langevin_step_size * self.langevin_step_size * (input_image / self.sigma1 / self.sigma1 - grad) + self.langevin_step_size * noise
-			return tf.add(i, 1), input_image
-
-		with tf.name_scope("des_langevin_revision"):
-			i = tf.constant(0)
-			i, input_image = tf.while_loop(cond, body, [i, input_image_arg])
-			return input_image
-
-
-
-
