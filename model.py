@@ -3,6 +3,7 @@ import numpy as np
 import time
 import datetime
 import os
+import math
 
 from glob import glob
 from six.moves import xrange
@@ -13,6 +14,11 @@ from ops import *
 
 # utils: for loading data, model
 from utils import *
+
+
+def conv_out_size_same(size, stride):
+	return int(math.ceil(float(size) / float(stride)))
+
 
 class Coop_pix2pix(object):
 	def __init__(self, sess, 
@@ -73,8 +79,19 @@ class Coop_pix2pix(object):
 		self.sigma2 = 0.3
 		self.beta1 = 0.5
 
+		self.z_size = 100
+		self.gf_dim = 256
+
+		self.g_bn0 = batch_norm(name='g_bn0')
+		self.g_bn1 = batch_norm(name='g_bn1')
+		self.g_bn2 = batch_norm(name='g_bn2')
+		self.g_bn3 = batch_norm(name='g_bn3')
+
+		self.output_height = 256
+		self.output_width = 256
+
 		self.input_latent = tf.placeholder(tf.float32,
-				[self.batch_size, 1, 1, 100],
+				[self.batch_size, 1, 1, self.z_size],
 				name='input_latent')
 		self.input_picture = tf.placeholder(tf.float32,
 				[self.batch_size, self.image_size, self.image_size, self.input_pic_dim],
@@ -131,28 +148,11 @@ class Coop_pix2pix(object):
 		print("")
 		
 
-		# # descriptor loss functions
-		# self.des_loss = tf.reduce_sum(tf.subtract(tf.reduce_mean(described_revised_B, axis=0), tf.reduce_mean(described_real_data_B, axis=0)))
-
-		# self.des_optim = tf.train.AdamOptimizer(self.descriptor_learning_rate, beta1=self.beta1).minimize(self.des_loss, var_list=self.des_vars)
+		self.sketch_loss = L1_distance(self.latent, self.input_latent) 
+		self.sketch_optim = tf.train.AdamOptimizer(self.sketch_learning_rate, beta1=self.beta1).minimize(self.sketch_loss, var_list=self.sketch_vars)
 
 
-		# # Compute Mean square error(MSE) for generated data and real data
-		# self.mse_loss = tf.reduce_mean(
-  #           tf.pow(tf.subtract(tf.reduce_mean(self.input_generated_B, axis=0), tf.reduce_mean(self.input_revised_B, axis=0)), 2))
-
-
-		# # generator loss functions
-		# self.gen_loss = tf.reduce_sum(tf.reduce_mean(1.0 / (2 * self.sigma2 * self.sigma2) * tf.square(self.input_revised_B - self.generated_B), axis=0))
-		
-		# self.gen_optim = tf.train.AdamOptimizer(self.generator_learning_rate, beta1=self.beta1).minimize(self.gen_loss, var_list=self.gen_vars)
-
-
-		# recover loss functions
-		self.encoder_loss = L1_distance(self.latent, self.input_latent) # tf.reduce_mean((self.recovered_A - self.input_real_data_A)**2)
-
-		# tf.reduce_sum(tf.reduce_mean(1.0 / (2 * self.sigma2 * self.sigma2) * tf.square(self.recovered_A - self.input_real_data_A), axis=0))
-
+		self.encoder_loss = L1_distance(self.latent, self.input_latent) 
 		self.encoder_optim = tf.train.AdamOptimizer(self.encoder_learning_rate, beta1=self.beta1).minimize(self.encoder_loss, var_list=self.encoder_vars)
 
 		self.saver = tf.train.Saver(max_to_keep=10)
@@ -208,19 +208,20 @@ class Coop_pix2pix(object):
 
 				# step 1: sketch -> latent
 				latent_var = sess.run(self.latent, feed_dict={self.input_picture: data_A})
-				print(" ------ step 1 finish ------ ")
+				# print(" ------ step 1 finish ------ ")
+				# print("latent_var.shape: ",latent_var.shape)
 
 				# step 2: latent -> colorful picture
 				color_pic = sess.run(self.color_pic, feed_dict={self.input_latent: latent_var})
-				print(" ------ step 2 finish ------ ")
+				# print(" ------ step 2 finish ------ ")
 
 				# step 3: colorful picture -> latent
 				recovered_latent_var = sess.run(self.latent, feed_dict={self.input_picture: color_pic})
-				print(" ------ step 3 finish ------ ")
+				# print(" ------ step 3 finish ------ ")
 
 				# step 4: latent -> sketch
 				sketch_pic = sess.run(self.sketch_pic, feed_dict={self.input_latent: recovered_latent_var})
-				print(" ------ step 4 finish ------ ")
+				# print(" ------ step 4 finish ------ ")
 
 
 
@@ -238,7 +239,7 @@ class Coop_pix2pix(object):
 				# print(descriptor_loss)
 
 				# step R2: update recover net
-				recover_loss , _ = sess.run([self.rec_loss, self.rec_optim],
+				encoder_loss , _ = sess.run([self.encoder_loss, self.encoder_optim],
                                   		feed_dict={self.input_latent: latent_var, self.input_picture: color_pic})
 
 
@@ -249,17 +250,21 @@ class Coop_pix2pix(object):
 				# put picture in sample picture
 				# sample_results[index : (index + 1)] = revised_B
 
-				print("Epoch: [{:4d}] [{:4d}/{:4d}] time: {}, eta: {}, d_loss: {:.4f}, g_loss: {:.4f}, rec_loss: {:.4f}"
+				print("Epoch: [{:4d}] [{:4d}/{:4d}] time: {}, eta: {}, d_loss: {:.4f}, g_loss: {:.4f}, encoder_loss: {:.4f}"
 					.format(epoch, index, self.num_batch, 
 						str(datetime.timedelta(seconds=int(time.time()-start_time))),
 							str(datetime.timedelta(seconds=int((time.time()-start_time)*(counter_end-(self.epoch_startpoint*self.num_batch)-counter)/counter))),
-								 descriptor_loss, generator_loss, recover_loss))
+								 0, 0, encoder_loss))
 
 				if np.mod(counter, 10) == 1:
 					save_images(data_A, [self.batch_size, 1],
 						'./{}/ep{:02d}_{:04d}_01_input_data_A.png'.format(self.output_dir, epoch, index))
 					save_images(data_B, [self.batch_size, 1],
 						'./{}/ep{:02d}_{:04d}_02_input_data_B.png'.format(self.output_dir, epoch, index))
+					save_images(color_pic, [self.batch_size, 1],
+						'./{}/ep{:02d}_{:04d}_03_color_pic.png'.format(self.output_dir, epoch, index))
+					save_images(sketch_pic, [self.batch_size, 1],
+						'./{}/ep{:02d}_{:04d}_04_sketch_pic.png'.format(self.output_dir, epoch, index))
 					
 
 				counter += 1
@@ -280,55 +285,151 @@ class Coop_pix2pix(object):
 
 			conv3 = conv2d(conv2, 256, kernal=(3, 3), strides=(1, 1), padding="SAME", activate_func="leaky_relu", name="conv3")
 
-			fc = fully_connected(conv3, 100, name="fc")
+			fc = fully_connected(conv3, self.z_size, name="fc")
 
 			print("latent shape:",fc.shape)
 
 			return fc
 
-	def colorful_decoder(self, input_data, reuse=False):
+	def colorful_decoder(self, input_data, reuse=False, is_training=True):
 		with tf.variable_scope("color_decode", reuse=reuse):
-			print(input_data.shape)
-			input_data = tf.reshape(input_data, [-1, 1, 1, 100])
-			print(input_data.shape)
-			trans_conv1 = transpose_conv2d(input_data, (None, self.image_size // 16, self.image_size // 16, 512), kernal=(4, 4),
-								strides=(1, 1), padding="VALID", activate_func="leaky_relu", name="trans_conv1")
-			trans_conv2 = transpose_conv2d(trans_conv1, (None, self.image_size // 8, self.image_size // 8, 256), kernal=(5, 5),
-								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv2")
-			trans_conv3 = transpose_conv2d(trans_conv2, (None, self.image_size // 4, self.image_size // 4, 128), kernal=(5, 5),
-								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv3")
-			trans_conv4 = transpose_conv2d(trans_conv3, (None, self.image_size // 2, self.image_size // 2, 64), kernal=(5, 5),
-								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv4")
-			trans_conv5 = transpose_conv2d(trans_conv4, (None, self.image_size, self.image_size, 3), kernal=(5, 5),
-								strides=(2, 2), padding="SAME", activate_func=None, name="trans_conv5")
-			result = tf.nn.tanh(trans_conv5)
+			# print(input_data.shape)
+			# input_data = tf.reshape(input_data, [-1, 1, 1, 100])
+			# print(input_data.shape)
+			# trans_conv1 = transpose_conv2d(input_data, (None, self.image_size // 16, self.image_size // 16, 512), kernal=(4, 4),
+			# 					strides=(1, 1), padding="VALID", activate_func="leaky_relu", name="trans_conv1")
+			# trans_conv2 = transpose_conv2d(trans_conv1, (None, self.image_size // 8, self.image_size // 8, 256), kernal=(5, 5),
+			# 					strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv2")
+			# trans_conv3 = transpose_conv2d(trans_conv2, (None, self.image_size // 4, self.image_size // 4, 128), kernal=(5, 5),
+			# 					strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv3")
+			# trans_conv4 = transpose_conv2d(trans_conv3, (None, self.image_size // 2, self.image_size // 2, 64), kernal=(5, 5),
+			# 					strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv4")
+			# trans_conv5 = transpose_conv2d(trans_conv4, (None, self.image_size, self.image_size, 3), kernal=(5, 5),
+			# 					strides=(2, 2), padding="SAME", activate_func=None, name="trans_conv5")
+			# result = tf.nn.tanh(trans_conv5)
 
-			print("color shape:",result.shape)
+			# print("color shape:",result.shape)
 
-			return result
+			# inputs = tf.reshape(input_data, [-1, 1, 1, self.z_size])
+			# convt1 = convt2d(inputs, (self.batch_size, self.image_size // 16, self.image_size // 16, 512), kernal=(4, 4)
+			#                  , strides=(1, 1), padding="VALID", name="convt1")
+			# convt1 = tf.contrib.layers.batch_norm(convt1, is_training=is_training)
+			# convt1 = leaky_relu(convt1)
+
+			# convt2 = convt2d(inputs, (self.batch_size, self.image_size // 8, self.image_size // 8, 256), kernal=(5, 5)
+			#                  , strides=(2, 2), padding="SAME", name="convt2")
+			# convt2 = tf.contrib.layers.batch_norm(convt2, is_training=is_training)
+			# convt2 = leaky_relu(convt2)
+
+			# convt3 = convt2d(convt2, (self.batch_size, self.image_size // 4, self.image_size // 4, 128), kernal=(5, 5)
+			#                  , strides=(2, 2), padding="SAME", name="convt3")
+			# convt3 = tf.contrib.layers.batch_norm(convt3, is_training=is_training)
+			# convt3 = leaky_relu(convt3)
+
+			# convt4 = convt2d(convt3, (self.batch_size, self.image_size // 2, self.image_size // 2, 64), kernal=(5, 5)
+			#                  , strides=(2, 2), padding="SAME", name="convt4")
+			# convt4 = tf.contrib.layers.batch_norm(convt4, is_training=is_training)
+			# convt4 = leaky_relu(convt4)
+
+			# convt5 = convt2d(convt4, (self.batch_size, self.image_size, self.image_size, 3), kernal=(5, 5)
+			#                  , strides=(2, 2), padding="SAME", name="convt5")
+			# convt5 = tf.nn.tanh(convt5)
+
+			# return convt5
+
+			s_h, s_w = self.output_height, self.output_width
+			s_h2, s_w2 = conv_out_size_same(s_h, 2), conv_out_size_same(s_w, 2)
+			s_h4, s_w4 = conv_out_size_same(s_h2, 2), conv_out_size_same(s_w2, 2)
+			s_h8, s_w8 = conv_out_size_same(s_h4, 2), conv_out_size_same(s_w4, 2)
+			s_h16, s_w16 = conv_out_size_same(s_h8, 2), conv_out_size_same(s_w8, 2)
+
+			input_data = tf.reshape(input_data,[1, -1])
+			print(input_data.shape)
+
+			# project `z` and reshape
+			self.z_, self.h0_w, self.h0_b = linear(
+				input_data, self.gf_dim*8*s_h16*s_w16, 'g_h0_lin', with_w=True)
+
+			self.h0 = tf.reshape(
+			self.z_, [-1, s_h16, s_w16, self.gf_dim * 8])
+			h0 = tf.nn.relu(self.g_bn0(self.h0))
+
+			self.h1, self.h1_w, self.h1_b = deconv2d(
+				h0, [self.batch_size, s_h8, s_w8, self.gf_dim*4], name='g_h1', with_w=True)
+			h1 = tf.nn.relu(self.g_bn1(self.h1))
+
+			h2, self.h2_w, self.h2_b = deconv2d(
+				h1, [self.batch_size, s_h4, s_w4, self.gf_dim*2], name='g_h2', with_w=True)
+			h2 = tf.nn.relu(self.g_bn2(h2))
+
+			h3, self.h3_w, self.h3_b = deconv2d(
+				h2, [self.batch_size, s_h2, s_w2, self.gf_dim*1], name='g_h3', with_w=True)
+			h3 = tf.nn.relu(self.g_bn3(h3))
+
+			h4, self.h4_w, self.h4_b = deconv2d(
+				h3, [self.batch_size, s_h, s_w, 3], name='g_h4', with_w=True)
+
+			return tf.nn.tanh(h4)
+
+			# return result
 
 
 	def sketch_decoder(self, input_data, reuse=False):
 		with tf.variable_scope("sketch_decode", reuse=reuse):
 
-			print(input_data.shape)
-			input_data = tf.reshape(input_data, [-1, 1, 1, 100])
-			print(input_data.shape)
-			trans_conv1 = transpose_conv2d(input_data, (None, self.image_size // 16, self.image_size // 16, 512), kernal=(4, 4),
-								strides=(1, 1), padding="VALID", activate_func="leaky_relu", name="trans_conv1")
-			trans_conv2 = transpose_conv2d(trans_conv1, (None, self.image_size // 8, self.image_size // 8, 256), kernal=(5, 5),
-								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv2")
-			trans_conv3 = transpose_conv2d(trans_conv2, (None, self.image_size // 4, self.image_size // 4, 128), kernal=(5, 5),
-								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv3")
-			trans_conv4 = transpose_conv2d(trans_conv3, (None, self.image_size // 2, self.image_size // 2, 64), kernal=(5, 5),
-								strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv4")
-			trans_conv5 = transpose_conv2d(trans_conv4, (None, self.image_size, self.image_size, 3), kernal=(5, 5),
-								strides=(2, 2), padding="SAME", activate_func=None, name="trans_conv5")
-			result = tf.nn.tanh(trans_conv5)
+			# print(input_data.shape)
+			# input_data = tf.reshape(input_data, [-1, 1, 1, self.z_size])
+			# print(input_data.shape)
+			# trans_conv1 = transpose_conv2d(input_data, (None, self.image_size // 16, self.image_size // 16, 512), kernal=(4, 4),
+			# 					strides=(1, 1), padding="VALID", activate_func="leaky_relu", name="trans_conv1")
+			# trans_conv2 = transpose_conv2d(trans_conv1, (None, self.image_size // 8, self.image_size // 8, 256), kernal=(5, 5),
+			# 					strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv2")
+			# trans_conv3 = transpose_conv2d(trans_conv2, (None, self.image_size // 4, self.image_size // 4, 128), kernal=(5, 5),
+			# 					strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv3")
+			# trans_conv4 = transpose_conv2d(trans_conv3, (None, self.image_size // 2, self.image_size // 2, 64), kernal=(5, 5),
+			# 					strides=(2, 2), padding="SAME", activate_func="leaky_relu", name="trans_conv4")
+			# trans_conv5 = transpose_conv2d(trans_conv4, (None, self.image_size, self.image_size, 3), kernal=(5, 5),
+			# 					strides=(2, 2), padding="SAME", activate_func=None, name="trans_conv5")
+			# result = tf.nn.tanh(trans_conv5)
 
-			print("sketch shape:",result.shape)
+			# print("sketch shape:",result.shape)
 
-			return result
+			# return result
+
+			s_h, s_w = self.output_height, self.output_width
+			s_h2, s_w2 = conv_out_size_same(s_h, 2), conv_out_size_same(s_w, 2)
+			s_h4, s_w4 = conv_out_size_same(s_h2, 2), conv_out_size_same(s_w2, 2)
+			s_h8, s_w8 = conv_out_size_same(s_h4, 2), conv_out_size_same(s_w4, 2)
+			s_h16, s_w16 = conv_out_size_same(s_h8, 2), conv_out_size_same(s_w8, 2)
+
+			input_data = tf.reshape(input_data,[1, -1])
+			print(input_data.shape)
+
+			# project `z` and reshape
+			self.z_, self.h0_w, self.h0_b = linear(
+				input_data, self.gf_dim*8*s_h16*s_w16, 'g_h0_lin', with_w=True)
+
+			self.h0 = tf.reshape(
+				self.z_, [-1, s_h16, s_w16, self.gf_dim * 8])
+			h0 = tf.nn.relu(self.g_bn0(self.h0))
+
+			self.h1, self.h1_w, self.h1_b = deconv2d(
+				h0, [self.batch_size, s_h8, s_w8, self.gf_dim*4], name='g_h1', with_w=True)
+			h1 = tf.nn.relu(self.g_bn1(self.h1))	
+
+			h2, self.h2_w, self.h2_b = deconv2d(
+				h1, [self.batch_size, s_h4, s_w4, self.gf_dim*2], name='g_h2', with_w=True)
+			h2 = tf.nn.relu(self.g_bn2(h2))
+
+			h3, self.h3_w, self.h3_b = deconv2d(
+				h2, [self.batch_size, s_h2, s_w2, self.gf_dim*1], name='g_h3', with_w=True)
+			h3 = tf.nn.relu(self.g_bn3(h3))
+
+			h4, self.h4_w, self.h4_b = deconv2d(
+				h3, [self.batch_size, s_h, s_w, 3], name='g_h4', with_w=True)
+
+			return tf.nn.tanh(h4)
+
 
 
 	def save(self, checkpoint_dir, step):
