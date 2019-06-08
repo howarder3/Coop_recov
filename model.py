@@ -30,7 +30,7 @@ class Coop_pix2pix(object):
 				langevin_revision_steps = 1, 
 				langevin_step_size = 0.002,
 				descriptor_learning_rate = 0.01,
-				generator_learning_rate = 0.0001,
+				sketch_learning_rate = 0.0001,
 				encoder_learning_rate = 0.0001,
 				dataset_name='edges2handbags', dataset_dir ='./test_datasets', 
 				output_dir='./output_dir', checkpoint_dir='./checkpoint_dir', log_dir='./log_dir'):
@@ -62,7 +62,7 @@ class Coop_pix2pix(object):
 
 		# learning rate
 		self.descriptor_learning_rate = descriptor_learning_rate 
-		self.generator_learning_rate  = generator_learning_rate 
+		self.sketch_learning_rate  = sketch_learning_rate 
 		self.encoder_learning_rate  = encoder_learning_rate 
 		# print(1e-5) # 0.00001
 		
@@ -148,8 +148,8 @@ class Coop_pix2pix(object):
 		print("")
 		
 
-		self.sketch_loss = L1_distance(self.latent, self.input_latent) 
-		self.sketch_optim = tf.train.AdamOptimizer(self.sketch_learning_rate, beta1=self.beta1).minimize(self.sketch_loss, var_list=self.sketch_vars)
+		self.sketch_loss = L1_distance(self.sketch_pic, self.input_real_data_A) 
+		self.sketch_optim = tf.train.AdamOptimizer(self.sketch_learning_rate, beta1=self.beta1).minimize(self.sketch_loss, var_list=self.sketch_decode_vars)
 
 
 		self.encoder_loss = L1_distance(self.latent, self.input_latent) 
@@ -240,7 +240,10 @@ class Coop_pix2pix(object):
 
 				# step R2: update recover net
 				encoder_loss , _ = sess.run([self.encoder_loss, self.encoder_optim],
-                                  		feed_dict={self.input_latent: latent_var, self.input_picture: color_pic})
+                        feed_dict={self.input_latent: latent_var, self.input_picture: color_pic})
+
+				sketch_loss , _ = sess.run([self.sketch_loss, self.sketch_optim],
+                  		feed_dict={self.input_latent: recovered_latent_var, self.input_real_data_A: data_A})
 
 
 				# Compute Mean square error(MSE) for generated data and revised data
